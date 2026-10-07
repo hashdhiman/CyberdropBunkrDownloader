@@ -15,6 +15,9 @@ BUNKR_SIGN_API_URL = "https://glb-apisign.cdn.cr/sign"
 BUNKR_METADATA_API_URL = "https://dl.bunkr.cr/api/_001_v2"
 
 MAX_RETRIES=10
+MIN_DOWNLOAD_SPEED_BPS = 1_000_000  # 1 MB/s (megabyte per second)
+SLOW_SPEED_GRACE_SECONDS = 60
+SPEED_CHECK_INTERVAL_SECONDS = 5
 
 def get_items_list(session, url, extensions, only_export, custom_path=None, is_last_page=True, date_before=None, date_after=None):
     extensions_list = extensions.split(',') if extensions is not None else []
@@ -146,10 +149,32 @@ def download(session, item_url, download_path, is_bunkr=False, file_name=None):
         file_size = int(r.headers.get('content-length', -1))
         with open(final_path, 'wb') as f:
             with tqdm(total=file_size, unit='iB', unit_scale=True, desc=file_name, leave=False) as pbar:
+                interval_started = time.monotonic()
+                interval_bytes = 0
+                below_speed_since = None
                 for chunk in r.iter_content(chunk_size=8192):
-                    if chunk is not None:
+                    if chunk:
                         f.write(chunk)
                         pbar.update(len(chunk))
+                        interval_bytes += len(chunk)
+
+                    now = time.monotonic()
+                    interval_elapsed = now - interval_started
+                    if interval_elapsed >= SPEED_CHECK_INTERVAL_SECONDS:
+                        speed_bps = interval_bytes / interval_elapsed
+                        if speed_bps < MIN_DOWNLOAD_SPEED_BPS:
+                            if below_speed_since is None:
+                                below_speed_since = interval_started
+                            elif now - below_speed_since > SLOW_SPEED_GRACE_SECONDS:
+                                print(f"\t[-] Skipping \"{file_name}\": download stayed below 1 MB/s for over 1 minute")
+                                f.close()
+                                os.remove(final_path)
+                                return
+                        else:
+                            below_speed_since = None
+
+                        interval_started = now
+                        interval_bytes = 0
 
     if is_bunkr and file_size > -1:
         downloaded_file_size = os.stat(final_path).st_size
