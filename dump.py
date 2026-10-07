@@ -107,7 +107,13 @@ def get_real_download_url(session, url, is_bunkr=True, item_name=None):
     else:
         url = url.replace('/f/','/api/f/')
 
-    r = session.get(url)
+    try:
+        r = session.get(url)
+    except (requests.exceptions.InvalidURL, requests.exceptions.MissingSchema,
+            requests.exceptions.InvalidSchema) as e:
+        label = f'"{item_name}"' if item_name else url
+        print(f"\t\t[-] Skipping {label}: invalid download page URL ({e})")
+        return None
     if r.status_code != 200:
         print(f"\t\t[-] HTTP error {r.status_code} getting real url for {url}")
         return None
